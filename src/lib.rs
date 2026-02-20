@@ -74,8 +74,8 @@ impl MLKEMParameters {
     ///
     /// # Example
     /// ```
-    /// use mldsa_edu::MLKEMParameters;
-    /// let params =:MLKEMParameters::new("ML-KEM-1024").unwrap();
+    /// use mlkem_edu::MLKEMParameters;
+    /// let params = MLKEMParameters::new("ML-KEM-1024").unwrap();
     /// ```
 
     pub fn new(name: &str) -> Result<Self, &'static str> {
