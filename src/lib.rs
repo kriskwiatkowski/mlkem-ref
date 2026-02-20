@@ -13,6 +13,7 @@ use sha3::{Digest, Sha3_256, Sha3_512, Shake128, Shake256};
 /// Modulus for polynomial arithmetic
 const Q: i32 = 3329;
 const N: usize = 256; // Polynomial degree
+const ROOT: i32 = 17; // Primitive root of unity mod Q
 
 /// Maximum k value (for ML-KEM-1024)
 const MAX_K: usize = 4;
@@ -21,27 +22,6 @@ const MAX_K: usize = 4;
 pub const MAX_PUBLIC_KEY_BYTES: usize = 1568; // ML-KEM-1024
 pub const MAX_SECRET_KEY_BYTES: usize = 3168; // ML-KEM-1024
 pub const MAX_CIPHERTEXT_BYTES: usize = 1568; // ML-KEM-1024
-
-// TODO: Don't keep it pre-computed
-// Array of precomputed zetas for NTT
-const ZETAS: [i32; N] = [
-    1, 17, 289, 1584, 296, 1703, 2319, 2804, 1062, 1409, 650, 1063, 1426, 939, 2647, 1722, 2642,
-    1637, 1197, 375, 3046, 1847, 1438, 1143, 2786, 756, 2865, 2099, 2393, 733, 2474, 2110, 2580,
-    583, 3253, 2037, 1339, 2789, 807, 403, 193, 3281, 2513, 2773, 535, 2437, 1481, 1874, 1897,
-    2288, 2277, 2090, 2240, 1461, 1534, 2775, 569, 3015, 1320, 2466, 1974, 268, 1227, 885, 1729,
-    2761, 331, 2298, 2447, 1651, 1435, 1092, 1919, 2662, 1977, 319, 2094, 2308, 2617, 1212, 630,
-    723, 2304, 2549, 56, 952, 2868, 2150, 3260, 2156, 33, 561, 2879, 2337, 3110, 2935, 3289, 2649,
-    1756, 3220, 1476, 1789, 452, 1026, 797, 233, 632, 757, 2882, 2388, 648, 1029, 848, 1100, 2055,
-    1645, 1333, 2687, 2402, 886, 1746, 3050, 1915, 2594, 821, 641, 910, 2154, 3328, 3312, 3040,
-    1745, 3033, 1626, 1010, 525, 2267, 1920, 2679, 2266, 1903, 2390, 682, 1607, 687, 1692, 2132,
-    2954, 283, 1482, 1891, 2186, 543, 2573, 464, 1230, 936, 2596, 855, 1219, 749, 2746, 76, 1292,
-    1990, 540, 2522, 2926, 3136, 48, 816, 556, 2794, 892, 1848, 1455, 1432, 1041, 1052, 1239, 1089,
-    1868, 1795, 554, 2760, 314, 2009, 863, 1355, 3061, 2102, 2444, 1600, 568, 2998, 1031, 882,
-    1678, 1894, 2237, 1410, 667, 1352, 3010, 1235, 1021, 712, 2117, 2699, 2606, 1025, 780, 3273,
-    2377, 461, 1179, 69, 1173, 3296, 2768, 450, 992, 219, 394, 40, 680, 1573, 109, 1853, 1540,
-    2877, 2303, 2532, 3096, 2697, 2572, 447, 941, 2681, 2300, 2481, 2229, 1274, 1684, 1996, 642,
-    927, 2443, 1583, 279, 1414, 735, 2508, 2688, 2419, 1175,
-];
 
 /// ML-KEM parameter set
 #[derive(Debug, Clone, Copy)]
@@ -137,38 +117,47 @@ fn modq64(x: i64, modulus: i32) -> i32 {
     }
 }
 
+fn pow_mod(mut base: u64, mut exp: u64, modu: u64) -> u64 {
+    base %= modu;
+    let mut result: u64 = 1;
+
+    while exp > 0 {
+        if (exp & 1) == 1 {
+            result = (result * base) % modu;
+        }
+        base = (base * base) % modu;
+        exp >>= 1;
+    }
+    result
+}
+
+// 8-bit reversal for indices 0..255
 fn bitrev(k: usize) -> usize {
-    let mut result = 0;
+    let mut result = 0usize;
     for i in 0..7 {
-        if k & (1 << i) != 0 {
+        if (k & (1 << i)) != 0 {
             result |= 1 << (6 - i);
         }
     }
     result
 }
 
+fn calc_zeta(exp: usize) -> i32 {
+    pow_mod(ROOT as u64, exp as u64, Q as u64) as i32
+}
+
+// zeta(k) = ROOT^(bitrev(k)) mod Q
 fn zeta(k: usize) -> i32 {
-    ZETAS[bitrev(k)]
+    calc_zeta(bitrev(k))
 }
 
-fn zeta2(i: usize) -> i32 {
-    ZETAS[2 * bitrev(i) + 1]
+// zeta2(k) = ROOT^(2*bitrev(k) + 1) mod Q  (odd exponents)
+fn zeta2(k: usize) -> i32 {
+    let r = bitrev(k);
+    calc_zeta(2 * r + 1)
 }
 
-/// Convert bytes to bits (LSB first)
-fn to_bits(b: &[u8], bits: &mut [bool]) {
-    let mut idx = 0;
-    for byte in b {
-        for j in 0..8 {
-            if idx < bits.len() {
-                bits[idx] = (byte >> j) & 1 == 1;
-                idx += 1;
-            }
-        }
-    }
-}
-
-/// Convert bits to bytes (LSB first)
+// Algorithm 3: Convert bits to bytes (LSB first)
 fn to_bytes(bits: &[bool], result: &mut [u8]) {
     for (i, chunk) in bits.chunks(8).enumerate() {
         if i >= result.len() {
@@ -184,7 +173,20 @@ fn to_bytes(bits: &[bool], result: &mut [u8]) {
     }
 }
 
-/// Encode polynomial coefficients into bytes
+// Algorithm 4: Convert bytes to bits (LSB first)
+fn to_bits(b: &[u8], bits: &mut [bool]) {
+    let mut idx = 0;
+    for byte in b {
+        for j in 0..8 {
+            if idx < bits.len() {
+                bits[idx] = (byte >> j) & 1 == 1;
+                idx += 1;
+            }
+        }
+    }
+}
+
+// Algorithm 5: Encode polynomial coefficients into bytes
 fn encode(d: usize, f: &[i32; N], out: &mut [u8]) {
     let mut bits = [false; N * 12]; // Max bits needed
     let mut bit_idx = 0;
@@ -203,7 +205,7 @@ fn encode(d: usize, f: &[i32; N], out: &mut [u8]) {
     to_bytes(&bits[..bit_idx], out);
 }
 
-/// Decode bytes into polynomial coefficients
+// Algorithm 6: Decode bytes into polynomial coefficients
 fn decode(d: usize, b: &[u8], f: &mut [i32; N]) {
     let mut bits = [false; N * 12];
     to_bits(b, &mut bits);
@@ -220,7 +222,7 @@ fn decode(d: usize, b: &[u8], f: &mut [i32; N]) {
     }
 }
 
-/// Sample uniform polynomial from seed
+// Algorithm 7: Sample uniform polynomial from seed
 fn sample_uniform(rho: &[u8], i: usize, j: usize, out: &mut [i32; N]) {
     let mut xof = Shake128::default();
     xof.update(rho);
@@ -247,7 +249,7 @@ fn sample_uniform(rho: &[u8], i: usize, j: usize, out: &mut [i32; N]) {
     }
 }
 
-/// Sample noise polynomial from centered binomial distribution
+// Algorithm 8: Sample noise polynomial from centered binomial distribution
 fn sample_noise(eta: usize, b: &[u8], out: &mut [i32; 256]) {
     let mut bits = [false; N * 2 * 3]; // Max: 256 * 2 * eta (eta max = 3)
     to_bits(b, &mut bits);
@@ -269,7 +271,7 @@ fn sample_noise(eta: usize, b: &[u8], out: &mut [i32; 256]) {
     }
 }
 
-/// Forward NTT
+// Algorithm 9: Forward NTT
 fn ntt(f: &[i32; N], out: &mut [i32; N]) {
     out.copy_from_slice(f);
     let mut k = 1;
@@ -293,7 +295,7 @@ fn ntt(f: &[i32; N], out: &mut [i32; N]) {
     }
 }
 
-/// Inverse NTT
+// Algorithm 10: Inverse NTT
 fn inv_ntt(ntt_f: &[i32; N], out: &mut [i32; N]) {
     out.copy_from_slice(ntt_f);
     let mut k = 127;
@@ -321,7 +323,7 @@ fn inv_ntt(ntt_f: &[i32; N], out: &mut [i32; N]) {
     }
 }
 
-/// Multiply two polynomials in NTT domain
+// Algorithm 11: Multiply two polynomials in NTT domain
 fn mul_ntt(ntt_f: &[i32; N], ntt_g: &[i32; N], out: &mut [i32; N]) {
     for i in 0..(N / 2) {
         let a0 = ntt_f[2 * i] as i64;
@@ -346,7 +348,7 @@ fn decompress(d: usize, y: i32) -> i32 {
     ((y * Q + (1 << (d - 1))) >> d) % Q
 }
 
-/// PRF using SHAKE256
+// PRF using SHAKE256
 fn prf(_eta: usize, s: &[u8], b: u8, out: &mut [u8]) {
     let mut xof = Shake256::default();
     xof.update(s);
@@ -392,7 +394,7 @@ fn psub(u: &[i32; N], v: &[i32; N], out: &mut [i32; N]) {
     }
 }
 
-/// Matrix-vector multiplication in NTT domain
+// Matrix-vector multiplication in NTT domain
 fn mat_vec(
     a: &[[[i32; N]; MAX_K]; MAX_K],
     s: &[[i32; N]; MAX_K],
@@ -412,7 +414,7 @@ fn mat_vec(
     }
 }
 
-/// Dot product in NTT domain
+// Dot product in NTT domain
 fn dot(u: &[[i32; N]; MAX_K], v: &[[i32; N]; MAX_K], k: usize, out: &mut [i32; N]) {
     let mut acc = [0i32; N];
 
@@ -427,14 +429,14 @@ fn dot(u: &[[i32; N]; MAX_K], v: &[[i32; N]; MAX_K], k: usize, out: &mut [i32; N
     *out = acc;
 }
 
-/// Vector addition
+// Vector addition
 fn vadd(u: &[[i32; 256]; MAX_K], v: &[[i32; 256]; MAX_K], k: usize, out: &mut [[i32; 256]; MAX_K]) {
     for i in 0..k {
         padd(&u[i], &v[i], &mut out[i]);
     }
 }
 
-/// PKE Key Generation
+// Algorithm 13: PKE Key Generation
 pub fn pke_gen(d: &[u8], p: &MLKEMParameters, ek: &mut [u8], dk: &mut [u8]) {
     let mut input = [0u8; 33];
     input[..d.len()].copy_from_slice(d);
@@ -495,8 +497,8 @@ pub fn pke_gen(d: &[u8], p: &MLKEMParameters, ek: &mut [u8], dk: &mut [u8]) {
     }
 }
 
-/// PKE Encryption
-pub fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8]) {
+// Algorithm 14: PKE Encryption
+fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8]) {
     // Parse public key
     let mut ntt_t = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
@@ -581,8 +583,8 @@ pub fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8])
     encode(p.dv, &compressed_v, &mut c[offset..offset + 32 * p.dv]);
 }
 
-/// PKE Decryption
-pub fn pke_dec(dk: &[u8], c: &[u8], p: &MLKEMParameters, m: &mut [u8]) {
+// Algorithm 15: PKE Decryption
+fn pke_dec(dk: &[u8], c: &[u8], p: &MLKEMParameters, m: &mut [u8]) {
     let c1 = &c[..32 * p.du * p.k];
     let c2 = &c[32 * p.du * p.k..];
 
@@ -634,7 +636,7 @@ pub fn pke_dec(dk: &[u8], c: &[u8], p: &MLKEMParameters, m: &mut [u8]) {
     encode(1, &compressed, m);
 }
 
-/// ML-KEM Key Generation
+// Algorithm 19: ML-KEM Key Generation
 pub fn ml_kem_keygen(
     d: &[u8; 32],
     z: &[u8; 32],
@@ -669,7 +671,7 @@ pub fn ml_kem_keygen(
     dk[offset..offset + 32].copy_from_slice(z);
 }
 
-/// ML-KEM Encapsulation
+// Algorithm 20: ML-KEM Encapsulation
 pub fn ml_kem_encaps(ek: &[u8], m: &[u8; 32], p: &MLKEMParameters, k: &mut [u8; 32], c: &mut [u8]) {
     let mut h_ek = [0u8; 32];
     hash(&ek[..p.public_key_length], &mut h_ek);
@@ -692,7 +694,7 @@ pub fn ml_kem_encaps(ek: &[u8], m: &[u8; 32], p: &MLKEMParameters, k: &mut [u8; 
     k.copy_from_slice(&k_out);
 }
 
-/// ML-KEM Decapsulation
+// Algorithm 21: ML-KEM Decapsulation
 pub fn ml_kem_decaps(dk: &[u8], c: &[u8], p: &MLKEMParameters, k: &mut [u8; 32]) {
     let dk_pke = &dk[..384 * p.k];
     let ek_pke = &dk[384 * p.k..384 * p.k + p.public_key_length];
@@ -740,7 +742,7 @@ pub fn ml_kem_decaps(dk: &[u8], c: &[u8], p: &MLKEMParameters, k: &mut [u8; 32])
     }
 }
 
-/// Validate encapsulation key (public key)
+// Validate encapsulation key (public key)
 pub fn check_ek(ek: &[u8], p: &MLKEMParameters) -> bool {
     // Check exact length
     if ek.len() != p.public_key_length {
@@ -768,7 +770,7 @@ pub fn check_ek(ek: &[u8], p: &MLKEMParameters) -> bool {
     true
 }
 
-/// Validate decapsulation key (secret key)
+// Validate decapsulation key (secret key)
 pub fn check_dk(dk: &[u8], p: &MLKEMParameters) -> bool {
     // Check exact length
     if dk.len() != p.secret_key_length {
