@@ -54,7 +54,7 @@ impl MLKEMParameters {
     ///
     /// # Example
     /// ```
-    /// use mlkem_edu::MLKEMParameters;
+    /// use mlkem_ref::MLKEMParameters;
     /// let params = MLKEMParameters::new("ML-KEM-1024").unwrap();
     /// ```
 

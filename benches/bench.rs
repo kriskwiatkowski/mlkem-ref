@@ -4,7 +4,7 @@
 use criterion::measurement::Measurement;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use criterion_cycles_per_byte::CyclesPerByte;
-use mlkem_edu::*;
+use mlkem_ref::*;
 use std::hint::black_box;
 
 fn benchmark_keygen<M: Measurement>(c: &mut Criterion<M>) {

@@ -5,7 +5,7 @@
 //! Tests key generation, encapsulation, and decapsulation
 //! using NIST FIPS-203 test vectors
 
-use mlkem_edu::*;
+use mlkem_ref::*;
 use serde::Deserialize;
 use std::fs;
 
