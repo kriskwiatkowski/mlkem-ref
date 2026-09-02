@@ -1,11 +1,13 @@
 [package]
-name = "mlkem-edu"
+name = "mlkem-ref"
 description = "A reference Rust implementation of the ML-KEM post-quantum key encapsulation mechanism."
 repository = "https://github.com/kriskwiatkowski/mlkem-ref"
 version = "0.0.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 author = "Kris Kwiatkowski <kris@amongbytes.com>"
+keywords = ["cryptography", "post-quantum", "kem", "code-based", "hqc"]
+categories = ["cryptography", "no-std"]
 
 [dependencies]
 sha3 = "0.10"
