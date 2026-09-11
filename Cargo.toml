@@ -9,6 +9,10 @@ author = "Kris Kwiatkowski <kris@amongbytes.com>"
 keywords = ["cryptography", "post-quantum", "kem", "code-based", "hqc"]
 categories = ["cryptography", "no-std"]
 
+[workspace]
+members = ["xtask"]
+resolver = "2"
+
 [dependencies]
 sha3 = "0.10"
 serde = { version = "1.0", features = ["derive"] }

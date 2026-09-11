@@ -5,31 +5,12 @@ on:
         branches: [main, master]
     pull_request:
         branches: [main, master]
-env:
-    CARGO_TERM_COLOR: always
-
 jobs:
     test:
         runs-on: ubuntu-latest
-        env:
-            KATWALK_VERSION: 0.0.15
-            KATWALK_BIN: katwalk
-            CRYPTO_TEST_VECTORS: "$GITHUB_WORKSPACE/crypto-test-vectors"
-            MLKEM_VECTORS: "${{ github.workspace }}/crypto-test-vectors/vectors/acvp/FIPS-203"
 
         steps:
-            - name: Add Cargo binaries to PATH
-              run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
             - uses: actions/checkout@v4
-
-            - name: Check out test vectors
-              uses: actions/checkout@v4
-              with:
-                  repository: kriskwiatkowski/crypto-test-vectors
-                  path: crypto-test-vectors
-                  persist-credentials: false
-                  ref: 5435bd2d90b97d26d4a7bb91e106ce8bbc45af5d
 
             - name: Install Rust toolchain
               uses: actions-rs/toolchain@v1
@@ -57,25 +38,5 @@ jobs:
                   path: target
                   key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-            - name: Install KATWalk
-              run: |
-                  cargo install katwalk --version "$KATWALK_VERSION"
-
-            - name: Build release wrapper
-              run: cargo build --release --verbose && ls ${{ env.MLKEM_VECTORS }}
-
-            - name: Run KATs - keygen
-              run: |
-                  ${{ env.KATWALK_BIN }} \
-                  --wrapper "$GITHUB_WORKSPACE/target/release/mlkem_wrapper" \
-                  --in ${{ env.MLKEM_VECTORS }}/keyGen/prompt.json \
-                  --out keygen_out.json \
-                  --expected ${{ env.MLKEM_VECTORS }}/keyGen/expectedResults.json
-
-            - name: Run KATs - encapsDecap
-              run: |
-                  ${{ env.KATWALK_BIN }} \
-                  --wrapper "$GITHUB_WORKSPACE/target/release/mlkem_wrapper" \
-                  --in ${{ env.MLKEM_VECTORS }}/encapsDecap/prompt.json \
-                  --out encapsDecap_out.json \
-                  --expected ${{ env.MLKEM_VECTORS }}/encapsDecap/expectedResults.json
+            - name: Run KATs
+              run: cargo xtask kat
