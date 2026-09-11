@@ -12,6 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out ACVP test vectors
+        uses: actions/checkout@v4
+        with:
+          repository: kriskwiatkowski/crypto-test-vectors
+          path: crypto-test-vectors
+          persist-credentials: false
+
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -46,6 +53,38 @@ jobs:
 
       - name: Run KAT
         run: cargo run --example kat_tests
+
+      - name: Verify ACVP vectors
+        run: |
+          ACVP_DIR="$RUNNER_TEMP/acvp-cli"
+          VECTORS="$GITHUB_WORKSPACE/crypto-test-vectors/vectors/acvp/FIPS-203"
+
+          mkdir "$ACVP_DIR"
+          curl -A 'cargo/1.85.0 (linux)' -fsSL \
+            https://crates.io/api/v1/crates/acvp-cli/0.0.1/download |
+            tar -xz -C "$ACVP_DIR" --strip-components=1
+
+          cat >> "$ACVP_DIR/Cargo.toml" <<EOF
+          [patch.crates-io]
+          mlkem-ref = { path = "$GITHUB_WORKSPACE" }
+          EOF
+
+          cargo build --release \
+            --manifest-path "$ACVP_DIR/Cargo.toml" \
+            --bin acvp-cli --bin mlkem_wrapper
+
+          ACVP="$ACVP_DIR/target/release/acvp-cli"
+          WRAPPER="$ACVP_DIR/target/release/mlkem_wrapper"
+
+          "$ACVP" --wrapper "$WRAPPER" \
+            --in "$VECTORS/keyGen/prompt.json" \
+            --out "$RUNNER_TEMP/keygen-responses.json" \
+            --expected "$VECTORS/keyGen/expectedResults.json"
+
+          "$ACVP" --wrapper "$WRAPPER" \
+            --in "$VECTORS/encapsDecap/prompt.json" \
+            --out "$RUNNER_TEMP/encaps-decap-responses.json" \
+            --expected "$VECTORS/encapsDecap/expectedResults.json"
 
   #      - name: Check formatting
   #        run: cargo fmt -- --check
