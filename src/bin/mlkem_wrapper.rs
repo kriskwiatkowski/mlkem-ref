@@ -2,7 +2,9 @@
 // See katwalk::modulewrapper for the shared stdin/stdout framing.
 
 use katwalk::modulewrapper;
-use mlkem_ref::{check_dk, check_ek, ml_kem_decaps, ml_kem_encaps, ml_kem_keygen, MLKEMParameters};
+use mlkem_ref::{
+    check_dk, check_ek, ml_kem_decaps, ml_kem_encaps, ml_kem_keygen, MLKEMParameters, Workspace,
+};
 
 fn params(name: &[u8]) -> Result<MLKEMParameters, String> {
     let s = std::str::from_utf8(name).map_err(|e| e.to_string())?;
@@ -44,7 +46,8 @@ fn dispatch(args: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, String> {
             let d: &[u8; 32] = seed[32..64].try_into().unwrap();
             let mut ek = vec![0u8; p.public_key_length];
             let mut dk = vec![0u8; p.secret_key_length];
-            ml_kem_keygen(d, z, &p, &mut ek, &mut dk);
+            let mut ws = Box::new(Workspace::new());
+            ml_kem_keygen(d, z, &p, &mut ek, &mut dk, &mut ws);
             Ok(vec![ek, dk])
         }
 
@@ -61,7 +64,8 @@ fn dispatch(args: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, String> {
                 .map_err(|_| format!("encaps m must be 32 bytes, got {}", args[3].len()))?;
             let mut k = [0u8; 32];
             let mut c = vec![0u8; p.ciphertext_length];
-            ml_kem_encaps(ek, m, &p, &mut k, &mut c);
+            let mut ws = Box::new(Workspace::new());
+            ml_kem_encaps(ek, m, &p, &mut k, &mut c, &mut ws);
             Ok(vec![c, k.to_vec()])
         }
 
@@ -74,7 +78,8 @@ fn dispatch(args: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, String> {
             let dk = &args[2];
             let ct = &args[3];
             let mut k = [0u8; 32];
-            ml_kem_decaps(dk, ct, &p, &mut k);
+            let mut ws = Box::new(Workspace::new());
+            ml_kem_decaps(dk, ct, &p, &mut k, &mut ws);
             Ok(vec![k.to_vec()])
         }
 
@@ -84,7 +89,8 @@ fn dispatch(args: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, String> {
             let Some(p) = resolve_params(&args[1])? else {
                 return Ok(vec![b"unsupported".to_vec()]);
             };
-            Ok(vec![if check_ek(&args[2], &p) {
+            let mut ws = Box::new(Workspace::new());
+            Ok(vec![if check_ek(&args[2], &p, &mut ws) {
                 vec![0x01]
             } else {
                 vec![0x00]

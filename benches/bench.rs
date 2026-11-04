@@ -23,6 +23,7 @@ fn benchmark_keygen<M: Measurement>(c: &mut Criterion<M>) {
             BenchmarkId::from_parameter(param_name),
             &param,
             |b, param| {
+                let mut ws = Box::new(Workspace::new());
                 b.iter(|| {
                     let mut pk = vec![0u8; param.public_key_length];
                     let mut sk: Vec<u8> = vec![0u8; param.secret_key_length];
@@ -32,6 +33,7 @@ fn benchmark_keygen<M: Measurement>(c: &mut Criterion<M>) {
                         black_box(param),
                         &mut pk,
                         &mut sk,
+                        &mut ws,
                     );
                 });
             },
@@ -56,7 +58,8 @@ fn benchmark_encaps<M: Measurement>(c: &mut Criterion<M>) {
         let mut pk = [0u8; MAX_PUBLIC_KEY_BYTES];
         let mut sk = [0u8; MAX_SECRET_KEY_BYTES];
         let m = [0u8; 32];
-        ml_kem_keygen(&d, &z, &param, &mut pk, &mut sk);
+        let mut ws = Box::new(Workspace::new());
+        ml_kem_keygen(&d, &z, &param, &mut pk, &mut sk, &mut ws);
         group.bench_with_input(
             BenchmarkId::from_parameter(param_name),
             &param,
@@ -70,6 +73,7 @@ fn benchmark_encaps<M: Measurement>(c: &mut Criterion<M>) {
                         black_box(param),
                         &mut k,
                         &mut c,
+                        &mut ws,
                     );
                 });
             },
@@ -96,15 +100,16 @@ fn benchmark_decaps<M: Measurement>(c: &mut Criterion<M>) {
         let m = [0u8; 32];
         let mut k = [0u8; 32];
         let mut c = [0u8; MAX_CIPHERTEXT_BYTES];
+        let mut ws = Box::new(Workspace::new());
 
-        ml_kem_keygen(&d, &z, &param, &mut pk, &mut sk);
-        ml_kem_encaps(&pk, &m, &param, &mut k, &mut c);
+        ml_kem_keygen(&d, &z, &param, &mut pk, &mut sk, &mut ws);
+        ml_kem_encaps(&pk, &m, &param, &mut k, &mut c, &mut ws);
         group.bench_with_input(
             BenchmarkId::from_parameter(param_name),
             &param,
             |b, param| {
                 b.iter(|| {
-                    ml_kem_decaps(black_box(&sk), black_box(&c), black_box(param), &mut k);
+                    ml_kem_decaps(black_box(&sk), black_box(&c), black_box(param), &mut k, &mut ws);
                 });
             },
         );

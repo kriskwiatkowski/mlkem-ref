@@ -7,6 +7,9 @@
 
 #![no_std]
 
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::{Digest, Sha3_256, Sha3_512, Shake128, Shake256};
 
@@ -95,6 +98,317 @@ impl MLKEMParameters {
             }),
             _ => Err("Unknown parameter set"),
         }
+    }
+}
+
+// --- Workspace -------------------------------------------------------------
+//
+// Every polynomial/matrix-sized temporary used while generating keys,
+// encapsulating or decapsulating is kept here instead of being a local stack
+// variable. The caller owns a `Workspace` and decides where it lives: as a
+// local on their own stack, in a `static`, behind a `Box` (with `alloc`), or
+// managed by a `heapless` memory pool (e.g. `heapless::object_pool!`) backed
+// by a block placed wherever they like. The library never allocates memory
+// of its own; it only ever borrows the `Workspace` the caller passes in.
+
+struct MatVecScratch {
+    acc: [i32; N],
+    prod: [i32; N],
+    temp: [i32; N],
+}
+
+impl MatVecScratch {
+    const fn new() -> Self {
+        Self {
+            acc: [0i32; N],
+            prod: [0i32; N],
+            temp: [0i32; N],
+        }
+    }
+}
+
+struct DotScratch {
+    acc: [i32; N],
+    prod: [i32; N],
+    temp: [i32; N],
+}
+
+impl DotScratch {
+    const fn new() -> Self {
+        Self {
+            acc: [0i32; N],
+            prod: [0i32; N],
+            temp: [0i32; N],
+        }
+    }
+}
+
+struct PkeGenScratch {
+    input: [u8; 33],
+    rho: [u8; 32],
+    sigma: [u8; 32],
+    ntt_a: [[[i32; N]; MAX_K]; MAX_K],
+    s: [[i32; N]; MAX_K],
+    e: [[i32; N]; MAX_K],
+    prf_out: [u8; 64 * 3], // Max: 64 * eta1 (eta1 max = 3)
+    ntt_s: [[i32; N]; MAX_K],
+    ntt_e: [[i32; N]; MAX_K],
+    ntt_t: [[i32; N]; MAX_K],
+    temp: [[i32; N]; MAX_K],
+    mv: MatVecScratch,
+    bits: [bool; N * 12],
+}
+
+impl PkeGenScratch {
+    const fn new() -> Self {
+        Self {
+            input: [0u8; 33],
+            rho: [0u8; 32],
+            sigma: [0u8; 32],
+            ntt_a: [[[0i32; N]; MAX_K]; MAX_K],
+            s: [[0i32; N]; MAX_K],
+            e: [[0i32; N]; MAX_K],
+            prf_out: [0u8; 64 * 3],
+            ntt_s: [[0i32; N]; MAX_K],
+            ntt_e: [[0i32; N]; MAX_K],
+            ntt_t: [[0i32; N]; MAX_K],
+            temp: [[0i32; N]; MAX_K],
+            mv: MatVecScratch::new(),
+            bits: [false; N * 12],
+        }
+    }
+}
+
+struct PkeEncScratch {
+    ntt_t: [[i32; N]; MAX_K],
+    ntt_a: [[[i32; N]; MAX_K]; MAX_K],
+    y: [[i32; N]; MAX_K],
+    e1: [[i32; N]; MAX_K],
+    prf_out: [u8; 64 * 3],
+    e2: [i32; N],
+    ntt_y: [[i32; N]; MAX_K],
+    u_temp: [[i32; N]; MAX_K],
+    u: [[i32; N]; MAX_K],
+    inv_tmp: [i32; N],
+    mu: [i32; N],
+    dot_result: [i32; N],
+    inv_result: [i32; N],
+    ve_temp: [i32; N],
+    v: [i32; N],
+    compressed: [i32; N],
+    compressed_v: [i32; N],
+    mv: MatVecScratch,
+    dt: DotScratch,
+    bits: [bool; N * 12],
+}
+
+impl PkeEncScratch {
+    const fn new() -> Self {
+        Self {
+            ntt_t: [[0i32; N]; MAX_K],
+            ntt_a: [[[0i32; N]; MAX_K]; MAX_K],
+            y: [[0i32; N]; MAX_K],
+            e1: [[0i32; N]; MAX_K],
+            prf_out: [0u8; 64 * 3],
+            e2: [0i32; N],
+            ntt_y: [[0i32; N]; MAX_K],
+            u_temp: [[0i32; N]; MAX_K],
+            u: [[0i32; N]; MAX_K],
+            inv_tmp: [0i32; N],
+            mu: [0i32; N],
+            dot_result: [0i32; N],
+            inv_result: [0i32; N],
+            ve_temp: [0i32; N],
+            v: [0i32; N],
+            compressed: [0i32; N],
+            compressed_v: [0i32; N],
+            mv: MatVecScratch::new(),
+            dt: DotScratch::new(),
+            bits: [false; N * 12],
+        }
+    }
+}
+
+struct PkeDecScratch {
+    u: [[i32; N]; MAX_K],
+    v: [i32; N],
+    decoded_v: [i32; N],
+    ntt_s: [[i32; N]; MAX_K],
+    u_hat: [[i32; N]; MAX_K],
+    decoded: [i32; N],
+    dot_result: [i32; N],
+    inv_result: [i32; N],
+    w: [i32; N],
+    compressed: [i32; N],
+    dt: DotScratch,
+    bits: [bool; N * 12],
+}
+
+impl PkeDecScratch {
+    const fn new() -> Self {
+        Self {
+            u: [[0i32; N]; MAX_K],
+            v: [0i32; N],
+            decoded_v: [0i32; N],
+            ntt_s: [[0i32; N]; MAX_K],
+            u_hat: [[0i32; N]; MAX_K],
+            decoded: [0i32; N],
+            dot_result: [0i32; N],
+            inv_result: [0i32; N],
+            w: [0i32; N],
+            compressed: [0i32; N],
+            dt: DotScratch::new(),
+            bits: [false; N * 12],
+        }
+    }
+}
+
+struct KeygenScratch {
+    ek_pke: [u8; MAX_PUBLIC_KEY_BYTES],
+    dk_pke: [u8; MAX_PUBLIC_KEY_BYTES * 2],
+    h: [u8; 32],
+}
+
+impl KeygenScratch {
+    const fn new() -> Self {
+        Self {
+            ek_pke: [0u8; MAX_PUBLIC_KEY_BYTES],
+            dk_pke: [0u8; MAX_PUBLIC_KEY_BYTES * 2],
+            h: [0u8; 32],
+        }
+    }
+}
+
+struct EncapsScratch {
+    h_ek: [u8; 32],
+    input: [u8; 64],
+    k_out: [u8; 32],
+    r: [u8; 32],
+}
+
+impl EncapsScratch {
+    const fn new() -> Self {
+        Self {
+            h_ek: [0u8; 32],
+            input: [0u8; 64],
+            k_out: [0u8; 32],
+            r: [0u8; 32],
+        }
+    }
+}
+
+struct DecapsScratch {
+    m_prime: [u8; 32],
+    input: [u8; 64],
+    k_prime: [u8; 32],
+    r_prime: [u8; 32],
+    c_prime: [u8; MAX_CIPHERTEXT_BYTES],
+    input_rej: [u8; MAX_CIPHERTEXT_BYTES + 32],
+}
+
+impl DecapsScratch {
+    const fn new() -> Self {
+        Self {
+            m_prime: [0u8; 32],
+            input: [0u8; 64],
+            k_prime: [0u8; 32],
+            r_prime: [0u8; 32],
+            c_prime: [0u8; MAX_CIPHERTEXT_BYTES],
+            input_rej: [0u8; MAX_CIPHERTEXT_BYTES + 32],
+        }
+    }
+}
+
+struct CheckEkScratch {
+    ek_test: [u8; MAX_PUBLIC_KEY_BYTES],
+    decoded: [i32; N],
+    bits: [bool; N * 12],
+}
+
+impl CheckEkScratch {
+    const fn new() -> Self {
+        Self {
+            ek_test: [0u8; MAX_PUBLIC_KEY_BYTES],
+            decoded: [0i32; N],
+            bits: [false; N * 12],
+        }
+    }
+}
+
+/// All scratch memory needed by [`ml_kem_keygen`], [`ml_kem_encaps`],
+/// [`ml_kem_decaps`] and [`check_ek`]. Construct one with [`Workspace::new`]
+/// and place it wherever you want (stack, `static`, `Box`, a `heapless`
+/// memory pool, ...), then pass `&mut` it to those functions.
+pub struct Workspace {
+    keygen: KeygenScratch,
+    pgen: PkeGenScratch,
+    encaps: EncapsScratch,
+    penc: PkeEncScratch,
+    decaps: DecapsScratch,
+    pdec: PkeDecScratch,
+    cek: CheckEkScratch,
+}
+
+impl Workspace {
+    /// Creates a new, zeroed workspace.
+    pub const fn new() -> Self {
+        Self {
+            keygen: KeygenScratch::new(),
+            pgen: PkeGenScratch::new(),
+            encaps: EncapsScratch::new(),
+            penc: PkeEncScratch::new(),
+            decaps: DecapsScratch::new(),
+            pdec: PkeDecScratch::new(),
+            cek: CheckEkScratch::new(),
+        }
+    }
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl Workspace {
+    /// Allocates a zeroed `Workspace` directly on the heap.
+    ///
+    /// Unlike `Box::new(Workspace::new())`, this never materializes the
+    /// (large) `Workspace` value on the caller's stack: the heap allocation
+    /// is zeroed in place.
+    pub fn new_boxed() -> alloc::boxed::Box<Self> {
+        // SAFETY: every field of `Workspace` is a plain integer array, so
+        // the all-zero bit pattern produced by `new_zeroed` is a valid
+        // value of the type, and is exactly what `Workspace::new` builds.
+        unsafe { alloc::boxed::Box::<Self>::new_zeroed().assume_init() }
+    }
+}
+
+/// A ready-made `heapless` object pool for [`Workspace`], available when the
+/// `heapless` feature is enabled.
+///
+/// This covers the common case of a single statically-allocated `Workspace`
+/// checked out and returned (via `Drop`) as needed. For more control (e.g.
+/// multiple blocks for concurrent use), use `heapless::object_pool!` directly
+/// with your own `'static` block(s), as shown in this crate's
+/// `examples/heapless_pool.rs`.
+#[cfg(feature = "heapless")]
+pub mod heapless_pool {
+    use crate::Workspace;
+    use core::ptr::addr_of_mut;
+    use heapless::pool::object::ObjectBlock;
+
+    heapless::object_pool!(WorkspacePool: Workspace);
+
+    /// Gives [`WorkspacePool`] its one statically-allocated [`Workspace`]
+    /// block. Call this once, before the first `WorkspacePool.request()`.
+    pub fn provision() {
+        static mut BLOCK: ObjectBlock<Workspace> = ObjectBlock::new(Workspace::new());
+        // SAFETY: `BLOCK` is only ever referenced here, and `provision` is
+        // meant to be called once, so nothing else can be aliasing it.
+        let block = unsafe { addr_of_mut!(BLOCK).as_mut().unwrap() };
+        WorkspacePool.manage(block);
     }
 }
 
@@ -187,8 +501,7 @@ fn to_bits(b: &[u8], bits: &mut [bool]) {
 }
 
 // Algorithm 5: Encode polynomial coefficients into bytes
-fn encode(d: usize, f: &[i32; N], out: &mut [u8]) {
-    let mut bits = [false; N * 12]; // Max bits needed
+fn encode(d: usize, f: &[i32; N], out: &mut [u8], bits: &mut [bool; N * 12]) {
     let mut bit_idx = 0;
 
     for &val in f.iter() {
@@ -206,9 +519,8 @@ fn encode(d: usize, f: &[i32; N], out: &mut [u8]) {
 }
 
 // Algorithm 6: Decode bytes into polynomial coefficients
-fn decode(d: usize, b: &[u8], f: &mut [i32; N]) {
-    let mut bits = [false; N * 12];
-    to_bits(b, &mut bits);
+fn decode(d: usize, b: &[u8], f: &mut [i32; N], bits: &mut [bool; N * 12]) {
+    to_bits(b, bits);
     let m = if d == 12 { Q } else { 1 << d };
 
     for i in 0..N {
@@ -223,6 +535,7 @@ fn decode(d: usize, b: &[u8], f: &mut [i32; N]) {
 }
 
 // Algorithm 7: Sample uniform polynomial from seed
+#[inline(never)]
 fn sample_uniform(rho: &[u8], i: usize, j: usize, out: &mut [i32; N]) {
     let mut xof = Shake128::default();
     xof.update(rho);
@@ -250,9 +563,9 @@ fn sample_uniform(rho: &[u8], i: usize, j: usize, out: &mut [i32; N]) {
 }
 
 // Algorithm 8: Sample noise polynomial from centered binomial distribution
-fn sample_noise(eta: usize, b: &[u8], out: &mut [i32; 256]) {
-    let mut bits = [false; N * 2 * 3]; // Max: 256 * 2 * eta (eta max = 3)
-    to_bits(b, &mut bits);
+#[inline(never)]
+fn sample_noise(eta: usize, b: &[u8], out: &mut [i32; 256], bits: &mut [bool; N * 12]) {
+    to_bits(b, bits);
 
     for i in 0..N {
         let mut x = 0;
@@ -349,6 +662,7 @@ fn decompress(d: usize, y: i32) -> i32 {
 }
 
 // PRF using SHAKE256
+#[inline(never)]
 fn prf(_eta: usize, s: &[u8], b: u8, out: &mut [u8]) {
     let mut xof = Shake256::default();
     xof.update(s);
@@ -358,6 +672,7 @@ fn prf(_eta: usize, s: &[u8], b: u8, out: &mut [u8]) {
 }
 
 // Hash using SHA3-256
+#[inline(never)]
 fn hash(s: &[u8], out: &mut [u8; 32]) {
     let mut hasher = Sha3_256::new();
     Digest::update(&mut hasher, s);
@@ -366,6 +681,7 @@ fn hash(s: &[u8], out: &mut [u8; 32]) {
 }
 
 // KDF using SHAKE256
+#[inline(never)]
 fn kdf(s: &[u8], out: &mut [u8; 32]) {
     let mut xof = Shake256::default();
     Update::update(&mut xof, s);
@@ -374,6 +690,7 @@ fn kdf(s: &[u8], out: &mut [u8; 32]) {
 }
 
 // Expand using SHA3-512
+#[inline(never)]
 fn expand(s: &[u8], out1: &mut [u8; 32], out2: &mut [u8; 32]) {
     let mut hasher = Sha3_512::new();
     Digest::update(&mut hasher, s);
@@ -400,33 +717,38 @@ fn mat_vec(
     s: &[[i32; N]; MAX_K],
     k: usize,
     out: &mut [[i32; N]; MAX_K],
+    sc: &mut MatVecScratch,
 ) {
+    let MatVecScratch { acc, prod, temp } = sc;
     for i in 0..k {
-        let mut acc = [0i32; N];
+        *acc = [0i32; N];
         for j in 0..k {
-            let mut prod = [0i32; N];
-            mul_ntt(&a[i][j], &s[j], &mut prod);
-            let mut temp = [0i32; N];
-            padd(&acc, &prod, &mut temp);
-            acc = temp;
+            mul_ntt(&a[i][j], &s[j], prod);
+            padd(acc, prod, temp);
+            *acc = *temp;
         }
-        out[i] = acc;
+        out[i] = *acc;
     }
 }
 
 // Dot product in NTT domain
-fn dot(u: &[[i32; N]; MAX_K], v: &[[i32; N]; MAX_K], k: usize, out: &mut [i32; N]) {
-    let mut acc = [0i32; N];
+fn dot(
+    u: &[[i32; N]; MAX_K],
+    v: &[[i32; N]; MAX_K],
+    k: usize,
+    out: &mut [i32; N],
+    sc: &mut DotScratch,
+) {
+    let DotScratch { acc, prod, temp } = sc;
+    *acc = [0i32; N];
 
     for i in 0..k {
-        let mut prod = [0i32; N];
-        mul_ntt(&u[i], &v[i], &mut prod);
-        let mut temp = [0i32; N];
-        padd(&acc, &prod, &mut temp);
-        acc = temp;
+        mul_ntt(&u[i], &v[i], prod);
+        padd(acc, prod, temp);
+        *acc = *temp;
     }
 
-    *out = acc;
+    *out = *acc;
 }
 
 // Vector addition
@@ -437,77 +759,107 @@ fn vadd(u: &[[i32; 256]; MAX_K], v: &[[i32; 256]; MAX_K], k: usize, out: &mut [[
 }
 
 // Algorithm 13: PKE Key Generation
-pub fn pke_gen(d: &[u8], p: &MLKEMParameters, ek: &mut [u8], dk: &mut [u8]) {
-    let mut input = [0u8; 33];
+fn pke_gen(d: &[u8], p: &MLKEMParameters, ek: &mut [u8], dk: &mut [u8], sc: &mut PkeGenScratch) {
+    let PkeGenScratch {
+        input,
+        rho,
+        sigma,
+        ntt_a,
+        s,
+        e,
+        prf_out,
+        ntt_s,
+        ntt_e,
+        ntt_t,
+        temp,
+        mv,
+        bits,
+    } = sc;
+
     input[..d.len()].copy_from_slice(d);
     input[32] = p.k as u8;
 
-    let mut rho = [0u8; 32];
-    let mut sigma = [0u8; 32];
-    expand(&input, &mut rho, &mut sigma);
+    expand(&input[..], rho, sigma);
 
     // Sample matrix A
-    let mut ntt_a = [[[0i32; 256]; MAX_K]; MAX_K];
     for i in 0..p.k {
         for j in 0..p.k {
-            sample_uniform(&rho, i, j, &mut ntt_a[i][j]);
+            sample_uniform(&rho[..], i, j, &mut ntt_a[i][j]);
         }
     }
 
     // Sample secret and error vectors
-    let mut s = [[0i32; 256]; MAX_K];
-    let mut e = [[0i32; 256]; MAX_K];
-    let mut prf_out = [0u8; 64 * 3]; // Max: 64 * eta1 (eta1 max = 3)
-
     for i in 0..p.k {
-        prf(p.eta1, &sigma, i as u8, &mut prf_out[..64 * p.eta1]);
-        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut s[i]);
+        prf(p.eta1, &sigma[..], i as u8, &mut prf_out[..64 * p.eta1]);
+        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut s[i], bits);
 
-        prf(p.eta1, &sigma, (p.k + i) as u8, &mut prf_out[..64 * p.eta1]);
-        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut e[i]);
+        prf(
+            p.eta1,
+            &sigma[..],
+            (p.k + i) as u8,
+            &mut prf_out[..64 * p.eta1],
+        );
+        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut e[i], bits);
     }
 
     // Convert to NTT domain
-    let mut ntt_s = [[0i32; 256]; MAX_K];
-    let mut ntt_e = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
         ntt(&s[i], &mut ntt_s[i]);
         ntt(&e[i], &mut ntt_e[i]);
     }
 
     // Compute ntt_t = A * ntt_s + ntt_e
-    let mut ntt_t = [[0i32; 256]; MAX_K];
-    let mut temp = [[0i32; 256]; MAX_K];
-    mat_vec(&ntt_a, &ntt_s, p.k, &mut temp);
-    vadd(&temp, &ntt_e, p.k, &mut ntt_t);
+    mat_vec(ntt_a, ntt_s, p.k, temp, mv);
+    vadd(temp, ntt_e, p.k, ntt_t);
 
     // Encode public key
     let mut offset = 0;
     for i in 0..p.k {
-        encode(12, &ntt_t[i], &mut ek[offset..offset + 384]);
+        encode(12, &ntt_t[i], &mut ek[offset..offset + 384], bits);
         offset += 384;
     }
-    ek[offset..offset + 32].copy_from_slice(&rho);
+    ek[offset..offset + 32].copy_from_slice(&rho[..]);
 
     // Encode secret key
     offset = 0;
     for i in 0..p.k {
-        encode(12, &ntt_s[i], &mut dk[offset..offset + 384]);
+        encode(12, &ntt_s[i], &mut dk[offset..offset + 384], bits);
         offset += 384;
     }
 }
 
 // Algorithm 14: PKE Encryption
-fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8]) {
+fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8], sc: &mut PkeEncScratch) {
+    let PkeEncScratch {
+        ntt_t,
+        ntt_a,
+        y,
+        e1,
+        prf_out,
+        e2,
+        ntt_y,
+        u_temp,
+        u,
+        inv_tmp,
+        mu,
+        dot_result,
+        inv_result,
+        ve_temp,
+        v,
+        compressed,
+        compressed_v,
+        mv,
+        dt,
+        bits,
+    } = sc;
+
     // Parse public key
-    let mut ntt_t = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
-        decode(12, &ek[384 * i..384 * (i + 1)], &mut ntt_t[i]);
+        decode(12, &ek[384 * i..384 * (i + 1)], &mut ntt_t[i], bits);
     }
     let rho = &ek[384 * p.k..384 * p.k + 32];
 
     // Sample matrix A^T
-    let mut ntt_a = [[[0i32; 256]; MAX_K]; MAX_K];
     for i in 0..p.k {
         for j in 0..p.k {
             sample_uniform(rho, j, i, &mut ntt_a[i][j]);
@@ -515,125 +867,114 @@ fn pke_enc(ek: &[u8], m: &[u8], r: &[u8], p: &MLKEMParameters, c: &mut [u8]) {
     }
 
     // Sample vectors
-    let mut y = [[0i32; 256]; MAX_K];
-    let mut e1 = [[0i32; 256]; MAX_K];
-    let mut prf_out = [0u8; 64 * 3];
-
     for i in 0..p.k {
         prf(p.eta1, r, i as u8, &mut prf_out[..64 * p.eta1]);
-        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut y[i]);
+        sample_noise(p.eta1, &prf_out[..64 * p.eta1], &mut y[i], bits);
 
         prf(p.eta2, r, (p.k + i) as u8, &mut prf_out[..64 * p.eta2]);
-        sample_noise(p.eta2, &prf_out[..64 * p.eta2], &mut e1[i]);
+        sample_noise(p.eta2, &prf_out[..64 * p.eta2], &mut e1[i], bits);
     }
 
-    let mut e2 = [0i32; 256];
     prf(p.eta2, r, (2 * p.k) as u8, &mut prf_out[..64 * p.eta2]);
-    sample_noise(p.eta2, &prf_out[..64 * p.eta2], &mut e2);
+    sample_noise(p.eta2, &prf_out[..64 * p.eta2], e2, bits);
 
     // Convert y to NTT domain
-    let mut ntt_y = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
         ntt(&y[i], &mut ntt_y[i]);
     }
 
     // Compute u = NTT^-1(A^T * ntt_y) + e1
-    let mut u_temp = [[0i32; 256]; MAX_K];
-    mat_vec(&ntt_a, &ntt_y, p.k, &mut u_temp);
+    mat_vec(ntt_a, ntt_y, p.k, u_temp, mv);
 
-    let mut u = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
-        let mut temp = [0i32; 256];
-        inv_ntt(&u_temp[i], &mut temp);
-        padd(&temp, &e1[i], &mut u[i]);
+        inv_ntt(&u_temp[i], inv_tmp);
+        padd(inv_tmp, &e1[i], &mut u[i]);
     }
 
     // Decode and decompress message
-    let mut mu = [0i32; 256];
-    decode(1, m, &mut mu);
+    decode(1, m, mu, bits);
     for i in 0..256 {
         mu[i] = decompress(1, mu[i]);
     }
 
     // Compute v = NTT^-1(ntt_t^T * ntt_y) + e2 + mu
-    let mut dot_result = [0i32; 256];
-    dot(&ntt_t, &ntt_y, p.k, &mut dot_result);
-    let mut inv_result = [0i32; 256];
-    inv_ntt(&dot_result, &mut inv_result);
-    let mut temp = [0i32; 256];
-    padd(&inv_result, &e2, &mut temp);
-    let mut v = [0i32; 256];
-    padd(&temp, &mu, &mut v);
+    dot(ntt_t, ntt_y, p.k, dot_result, dt);
+    inv_ntt(dot_result, inv_result);
+    padd(inv_result, e2, ve_temp);
+    padd(ve_temp, mu, v);
 
     // Compress and encode ciphertext
     let mut offset = 0;
     for i in 0..p.k {
-        let mut compressed = [0i32; 256];
         for j in 0..256 {
             compressed[j] = compress(p.du, u[i][j]);
         }
-        encode(p.du, &compressed, &mut c[offset..offset + 32 * p.du]);
+        encode(p.du, compressed, &mut c[offset..offset + 32 * p.du], bits);
         offset += 32 * p.du;
     }
 
-    let mut compressed_v = [0i32; 256];
     for i in 0..256 {
         compressed_v[i] = compress(p.dv, v[i]);
     }
-    encode(p.dv, &compressed_v, &mut c[offset..offset + 32 * p.dv]);
+    encode(p.dv, compressed_v, &mut c[offset..offset + 32 * p.dv], bits);
 }
 
 // Algorithm 15: PKE Decryption
-fn pke_dec(dk: &[u8], c: &[u8], p: &MLKEMParameters, m: &mut [u8]) {
+fn pke_dec(dk: &[u8], c: &[u8], p: &MLKEMParameters, m: &mut [u8], sc: &mut PkeDecScratch) {
+    let PkeDecScratch {
+        u,
+        v,
+        decoded_v,
+        ntt_s,
+        u_hat,
+        decoded,
+        dot_result,
+        inv_result,
+        w,
+        compressed,
+        dt,
+        bits,
+    } = sc;
+
     let c1 = &c[..32 * p.du * p.k];
     let c2 = &c[32 * p.du * p.k..];
 
     // Decode and decompress u
-    let mut u = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
         let start = i * 32 * p.du;
         let end = (i + 1) * 32 * p.du;
-        let mut decoded = [0i32; 256];
-        decode(p.du, &c1[start..end], &mut decoded);
+        decode(p.du, &c1[start..end], decoded, bits);
         for j in 0..256 {
             u[i][j] = decompress(p.du, decoded[j]);
         }
     }
 
     // Decode and decompress v
-    let mut v = [0i32; 256];
-    let mut decoded_v = [0i32; 256];
-    decode(p.dv, c2, &mut decoded_v);
+    decode(p.dv, c2, decoded_v, bits);
     for i in 0..256 {
         v[i] = decompress(p.dv, decoded_v[i]);
     }
 
     // Parse secret key
-    let mut ntt_s = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
-        decode(12, &dk[384 * i..384 * (i + 1)], &mut ntt_s[i]);
+        decode(12, &dk[384 * i..384 * (i + 1)], &mut ntt_s[i], bits);
     }
 
     // Convert u to NTT domain
-    let mut u_hat = [[0i32; 256]; MAX_K];
     for i in 0..p.k {
         ntt(&u[i], &mut u_hat[i]);
     }
 
     // Compute w = v - NTT^-1(ntt_s^T * u_hat)
-    let mut dot_result = [0i32; 256];
-    dot(&ntt_s, &u_hat, p.k, &mut dot_result);
-    let mut inv_result = [0i32; 256];
-    inv_ntt(&dot_result, &mut inv_result);
-    let mut w = [0i32; 256];
-    psub(&v, &inv_result, &mut w);
+    dot(ntt_s, u_hat, p.k, dot_result, dt);
+    inv_ntt(dot_result, inv_result);
+    psub(v, inv_result, w);
 
     // Compress and encode message
-    let mut compressed = [0i32; 256];
     for i in 0..256 {
         compressed[i] = compress(1, w[i]);
     }
-    encode(1, &compressed, m);
+    encode(1, compressed, m, bits);
 }
 
 // Algorithm 19: ML-KEM Key Generation
@@ -643,15 +984,17 @@ pub fn ml_kem_keygen(
     p: &MLKEMParameters,
     ek: &mut [u8],
     dk: &mut [u8],
+    ws: &mut Workspace,
 ) {
-    let mut ek_pke = [0u8; MAX_PUBLIC_KEY_BYTES];
-    let mut dk_pke = [0u8; MAX_PUBLIC_KEY_BYTES * 2];
+    let Workspace { keygen, pgen, .. } = ws;
+    let KeygenScratch { ek_pke, dk_pke, h } = keygen;
 
     pke_gen(
-        d,
+        &d[..],
         p,
         &mut ek_pke[..p.public_key_length],
         &mut dk_pke[..384 * p.k],
+        pgen,
     );
 
     // Build ek
@@ -664,63 +1007,85 @@ pub fn ml_kem_keygen(
     dk[offset..offset + p.public_key_length].copy_from_slice(&ek_pke[..p.public_key_length]);
     offset += p.public_key_length;
 
-    let mut h = [0u8; 32];
-    hash(&ek_pke[..p.public_key_length], &mut h);
-    dk[offset..offset + 32].copy_from_slice(&h);
+    hash(&ek_pke[..p.public_key_length], h);
+    dk[offset..offset + 32].copy_from_slice(&h[..]);
     offset += 32;
     dk[offset..offset + 32].copy_from_slice(z);
 }
 
 // Algorithm 20: ML-KEM Encapsulation
-pub fn ml_kem_encaps(ek: &[u8], m: &[u8; 32], p: &MLKEMParameters, k: &mut [u8; 32], c: &mut [u8]) {
-    let mut h_ek = [0u8; 32];
-    hash(&ek[..p.public_key_length], &mut h_ek);
+pub fn ml_kem_encaps(
+    ek: &[u8],
+    m: &[u8; 32],
+    p: &MLKEMParameters,
+    k: &mut [u8; 32],
+    c: &mut [u8],
+    ws: &mut Workspace,
+) {
+    let Workspace { encaps, penc, .. } = ws;
+    let EncapsScratch {
+        h_ek,
+        input,
+        k_out,
+        r,
+    } = encaps;
 
-    let mut input = [0u8; 64];
+    hash(&ek[..p.public_key_length], h_ek);
+
     input[..32].copy_from_slice(m);
-    input[32..].copy_from_slice(&h_ek);
+    input[32..].copy_from_slice(&h_ek[..]);
 
-    let mut k_out = [0u8; 32];
-    let mut r = [0u8; 32];
-    expand(&input, &mut k_out, &mut r);
+    expand(&input[..], k_out, r);
 
     pke_enc(
         &ek[..p.public_key_length],
-        m,
-        &r,
+        &m[..],
+        &r[..],
         p,
         &mut c[..p.ciphertext_length],
+        penc,
     );
-    k.copy_from_slice(&k_out);
+    k.copy_from_slice(&k_out[..]);
 }
 
 // Algorithm 21: ML-KEM Decapsulation
-pub fn ml_kem_decaps(dk: &[u8], c: &[u8], p: &MLKEMParameters, k: &mut [u8; 32]) {
+pub fn ml_kem_decaps(dk: &[u8], c: &[u8], p: &MLKEMParameters, k: &mut [u8; 32], ws: &mut Workspace) {
+    let Workspace {
+        decaps,
+        pdec,
+        penc,
+        ..
+    } = ws;
+    let DecapsScratch {
+        m_prime,
+        input,
+        k_prime,
+        r_prime,
+        c_prime,
+        input_rej,
+    } = decaps;
+
     let dk_pke = &dk[..384 * p.k];
     let ek_pke = &dk[384 * p.k..384 * p.k + p.public_key_length];
     let h = &dk[384 * p.k + p.public_key_length..384 * p.k + p.public_key_length + 32];
     let z = &dk[384 * p.k + p.public_key_length + 32..384 * p.k + p.public_key_length + 64];
 
     // Decrypt
-    let mut m_prime = [0u8; 32];
-    pke_dec(dk_pke, &c[..p.ciphertext_length], p, &mut m_prime);
+    pke_dec(dk_pke, &c[..p.ciphertext_length], p, m_prime, pdec);
 
     // Re-encrypt
-    let mut input = [0u8; 64];
-    input[..32].copy_from_slice(&m_prime);
+    input[..32].copy_from_slice(&m_prime[..]);
     input[32..].copy_from_slice(h);
 
-    let mut k_prime = [0u8; 32];
-    let mut r_prime = [0u8; 32];
-    expand(&input, &mut k_prime, &mut r_prime);
+    expand(&input[..], k_prime, r_prime);
 
-    let mut c_prime = [0u8; MAX_CIPHERTEXT_BYTES];
     pke_enc(
         ek_pke,
-        &m_prime,
-        &r_prime,
+        &m_prime[..],
+        &r_prime[..],
         p,
         &mut c_prime[..p.ciphertext_length],
+        penc,
     );
 
     // Implicit rejection
@@ -733,17 +1098,16 @@ pub fn ml_kem_decaps(dk: &[u8], c: &[u8], p: &MLKEMParameters, k: &mut [u8; 32])
     }
 
     if !match_ct {
-        let mut input_rej = [0u8; MAX_CIPHERTEXT_BYTES + 32];
         input_rej[..32].copy_from_slice(z);
         input_rej[32..32 + p.ciphertext_length].copy_from_slice(&c[..p.ciphertext_length]);
         kdf(&input_rej[..32 + p.ciphertext_length], k);
     } else {
-        k.copy_from_slice(&k_prime);
+        k.copy_from_slice(&k_prime[..]);
     }
 }
 
 // Validate encapsulation key (public key)
-pub fn check_ek(ek: &[u8], p: &MLKEMParameters) -> bool {
+pub fn check_ek(ek: &[u8], p: &MLKEMParameters, ws: &mut Workspace) -> bool {
     // Check exact length
     if ek.len() != p.public_key_length {
         return false;
@@ -751,14 +1115,18 @@ pub fn check_ek(ek: &[u8], p: &MLKEMParameters) -> bool {
 
     let t_hat_bytes = &ek[..384 * p.k];
 
+    let CheckEkScratch {
+        ek_test,
+        decoded,
+        bits,
+    } = &mut ws.cek;
+
     // Decode and re-encode to check validity
-    let mut ek_test = [0u8; MAX_PUBLIC_KEY_BYTES];
     for i in 0..p.k {
         let start = i * 384;
         let end = (i + 1) * 384;
-        let mut decoded = [0i32; 256];
-        decode(12, &t_hat_bytes[start..end], &mut decoded);
-        encode(12, &decoded, &mut ek_test[start..end]);
+        decode(12, &t_hat_bytes[start..end], decoded, bits);
+        encode(12, decoded, &mut ek_test[start..end], bits);
     }
 
     // Compare
@@ -791,3 +1159,4 @@ pub fn check_dk(dk: &[u8], p: &MLKEMParameters) -> bool {
     }
     true
 }
+
