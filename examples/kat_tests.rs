@@ -93,7 +93,8 @@ fn test_keygen() {
 
             let mut ek = vec![0u8; p.public_key_length];
             let mut dk = vec![0u8; p.secret_key_length];
-            ml_kem_keygen(&d, &z, &p, &mut ek, &mut dk);
+            let mut ws = Box::new(Workspace::new());
+            ml_kem_keygen(&d, &z, &p, &mut ek, &mut dk, &mut ws);
 
             let expected_test = &expected.test_groups[tg_idx].tests[test_idx];
             let expected_ek = hex::decode(expected_test.ek.as_ref().unwrap()).unwrap();
@@ -153,7 +154,8 @@ fn test_encaps_decaps() {
 
                 let mut k = [0u8; 32];
                 let mut c = vec![0u8; p.ciphertext_length];
-                ml_kem_encaps(&ek, &m, &p, &mut k, &mut c);
+                let mut ws = Box::new(Workspace::new());
+                ml_kem_encaps(&ek, &m, &p, &mut k, &mut c, &mut ws);
 
                 let expected_k = hex::decode(expected_test.k.as_ref().unwrap()).unwrap();
                 let expected_c = hex::decode(expected_test.c.as_ref().unwrap()).unwrap();
@@ -178,7 +180,8 @@ fn test_encaps_decaps() {
                 let c = hex::decode(test.c.as_ref().unwrap()).unwrap();
 
                 let mut k = [0u8; 32];
-                ml_kem_decaps(&dk, &c, &p, &mut k);
+                let mut ws = Box::new(Workspace::new());
+                ml_kem_decaps(&dk, &c, &p, &mut k, &mut ws);
 
                 let expected_k = hex::decode(expected_test.k.as_ref().unwrap()).unwrap();
                 let k_match = k.to_vec() == expected_k;
@@ -213,7 +216,8 @@ fn test_encaps_decaps() {
                 // EK validation test
                 let ek = hex::decode(test.ek.as_ref().unwrap()).unwrap();
 
-                let result = check_ek(&ek, &p);
+                let mut ws = Box::new(Workspace::new());
+                let result = check_ek(&ek, &p, &mut ws);
 
                 let expected_result = expected_test.test_passed.unwrap();
                 let match_result = result == expected_result;

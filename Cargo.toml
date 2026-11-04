@@ -13,16 +13,29 @@ categories = ["cryptography", "no-std"]
 members = ["xtask"]
 resolver = "2"
 
+[features]
+alloc = []
+heapless = ["dep:heapless"]
+
 [dependencies]
 sha3 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4.3"
-katwalk = "0.0.15"
+katwalk = "0.1.2"
+heapless = { version = "0.9.3", optional = true, features = ["portable-atomic"] }
 
 [dev-dependencies]
 criterion = "=0.8.2"
 criterion-cycles-per-byte = "0.8.0"
+
+[[example]]
+name = "heapless_pool"
+required-features = ["heapless"]
+
+[[example]]
+name = "stack_watermark"
+required-features = ["alloc"]
 
 [[bench]]
 name = "bench"
